@@ -5,34 +5,34 @@ import sqlite3
 import google.generativeai as genai
 from bs4 import BeautifulSoup
 from datetime import datetime
-from dataclasses import dataclass
 from typing import Dict, List
+import re
 
 # --- CONFIGURAÇÃO DA PÁGINA (MOBILE FIRST) ---
 st.set_page_config(
-    page_title="MilhasApp",
+    page_title="MilhasApp Pro",
     page_icon="✈️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- CSS CORRIGIDO (VISUAL MOBILE & CORES) ---
+# --- CSS (VISUAL MOBILE & CORREÇÃO DE CORES) ---
 st.markdown("""
     <style>
-        /* 1. Ajuste de Margens para Mobile (Tela Cheia) */
+        /* 1. Ajuste de Margens para Mobile */
         .block-container {
             padding-top: 1rem;
-            padding-bottom: 5rem; /* Espaço extra embaixo para rolagem */
+            padding-bottom: 5rem;
             padding-left: 0.5rem;
             padding-right: 0.5rem;
         }
         
-        /* 2. Esconde elementos desnecessários */
+        /* 2. Limpeza Visual */
         #MainMenu {visibility: visible;}
         footer {visibility: hidden;}
         header {visibility: hidden;}
         
-        /* 3. Botões Grandes (Fáceis de clicar) */
+        /* 3. Botões Grandes (Touch Friendly) */
         .stButton button {
             width: 100%;
             border-radius: 12px;
@@ -42,14 +42,10 @@ st.markdown("""
             box-shadow: 0px 2px 5px rgba(0,0,0,0.1);
             transition: all 0.3s ease;
         }
-        .stButton button:active {
-            transform: scale(0.98);
-        }
         
-        /* 4. CORREÇÃO DAS CAIXAS DE RESULTADO (MÉTRICAS) */
-        /* Força o fundo claro e bordas arredondadas */
+        /* 4. CORREÇÃO CRÍTICA: Caixas de Métricas (Fundo Claro + Texto Preto) */
         div[data-testid="stMetric"] {
-            background-color: #F8F9FA !important; /* Cinza bem claro */
+            background-color: #F8F9FA !important;
             border: 1px solid #E9ECEF;
             padding: 15px;
             border-radius: 12px;
@@ -57,21 +53,21 @@ st.markdown("""
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
         
-        /* Força a cor do TÍTULO da métrica para CINZA ESCURO */
+        /* Título da métrica (ex: "Lucro") em Cinza Escuro */
         div[data-testid="stMetric"] label {
             color: #495057 !important; 
             font-size: 0.9rem !important;
         }
         
-        /* Força a cor do NÚMERO da métrica para PRETO */
+        /* Valor da métrica (ex: "R$ 200") em Preto Absoluto */
         div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
-            color: #212529 !important;
-            font-weight: 700 !important;
+            color: #000000 !important;
+            font-weight: 800 !important;
         }
         
-        /* Cor da seta de variação (Delta) */
+        /* Delta (Percentual) com fundo suave */
         div[data-testid="stMetricDelta"] {
-            background-color: rgba(255,255,255,0.5);
+            background-color: rgba(0,0,0,0.05);
             border-radius: 5px;
             padding: 2px 5px;
             font-weight: bold;
@@ -86,37 +82,109 @@ class AIAnalyst:
         if api_key:
             try:
                 genai.configure(api_key=api_key)
+                # Tenta usar a versão mais recente e rápida
                 self.model = genai.GenerativeModel('gemini-2.5-flash')
-            except Exception as e:
-                st.error(f"Erro IA: {e}")
+            except:
+                # Fallback se a 2.5 não estiver disponível na região
+                self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     def analisar_cenario(self, cenario_dict, dados_mercado):
         if not self.api_key:
             return "⚠️ Configure a API Key nos 'Secrets' do Streamlit."
         
         prompt = f"""
-        Você é um consultor financeiro direto e objetivo.
-        Analise esta operação de milhas aéreas:
+        Você é um consultor financeiro especialista em Milhas. Seja direto.
         
-        OPERAÇÃO: Compra de {cenario_dict['pontos']} pontos no programa {cenario_dict['programa']}.
-        INVESTIMENTO: R$ {cenario_dict['investimento']:.2f} (CPM: R$ {cenario_dict['cpm']:.2f}).
-        VENDA ESPERADA: R$ {cenario_dict['preco_venda']:.2f} (Lucro: R$ {cenario_dict['lucro']:.2f}, ROI: {cenario_dict['roi']:.1f}%).
-        MERCADO: Preço médio hoje é R$ {dados_mercado.get(cenario_dict['programa'], 0):.2f}.
+        DADOS DA OPERAÇÃO:
+        - Programa: {cenario_dict['programa']}
+        - Investimento: R$ {cenario_dict['investimento']:.2f} (CPM: R$ {cenario_dict['cpm']:.2f})
+        - Venda Esperada: R$ {cenario_dict['preco_venda']:.2f}
+        - Lucro: R$ {cenario_dict['lucro']:.2f} (ROI: {cenario_dict['roi']:.1f}%)
         
-        Sua resposta deve ser formatada em HTML simples para ficar bonita no app.
-        Use tags <b> para negrito.
-        Responda em 3 tópicos curtos:
-        1. Veredito sobre o Preço de Venda.
-        2. Análise do Risco vs Retorno.
-        3. Conclusão Final (Comece com ✅, ⚠️ ou ❌).
+        MERCADO HOJE (Referência):
+        - Preço médio de venda do {cenario_dict['programa']}: R$ {dados_mercado.get(cenario_dict['programa'], 0):.2f}
+        
+        SUA ANÁLISE (Responda em HTML simples, sem markdown):
+        Use tags <b> para negrito e <br> para pular linha.
+        1. O preço de venda de R$ {cenario_dict['preco_venda']} é realista?
+        2. O risco vale o retorno de R$ {cenario_dict['lucro']}?
+        3. Veredito final (Comece com um Emoji).
         """
         try:
             response = self.model.generate_content(prompt)
             return response.text
-        except:
-            return "Erro ao conectar com a IA."
+        except Exception as e:
+            return f"Erro na IA: {str(e)}"
 
-# --- 2. GERENCIAMENTO DE BANCO DE DADOS ---
+# --- 2. SCRAPERS (PREÇOS E NOTÍCIAS) ---
+
+@st.cache_data(ttl=3600) # Atualiza preços a cada 1 hora
+def buscar_cotacoes_mercado():
+    """Busca média de preço em site de referência (Melhores Cartões)."""
+    url = "https://www.melhorescartoes.com.br/cotacao-milhas"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    
+    # Valores de segurança (caso o site caia)
+    cotacoes = {"Smiles": 17.00, "LatamPass": 23.00, "TudoAzul": 19.00}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=8)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            # Procura tabelas na página
+            tabelas = soup.find_all('table')
+            
+            for tabela in tabelas:
+                texto_tabela = tabela.get_text().lower()
+                # Se a tabela fala de milhas, tenta ler
+                if "smiles" in texto_tabela or "latam" in texto_tabela:
+                    rows = tabela.find_all('tr')
+                    for row in rows:
+                        cols = row.find_all('td')
+                        if len(cols) > 1:
+                            prog = cols[0].get_text().strip().lower()
+                            # Limpa o preço (tira R$, troca virgula por ponto)
+                            preco_str = cols[1].get_text().replace('R$', '').replace('.', '').replace(',', '.').strip()
+                            
+                            try:
+                                # Pega apenas o primeiro número se houver faixa (ex: "17.50 - 18.00")
+                                preco_val = float(re.findall(r"\d+\.\d+", preco_str)[0])
+                                
+                                if "smiles" in prog: cotacoes["Smiles"] = preco_val
+                                elif "latam" in prog: cotacoes["LatamPass"] = preco_val
+                                elif "azul" in prog: cotacoes["TudoAzul"] = preco_val
+                            except:
+                                continue
+    except:
+        pass # Mantém os valores padrão silenciosamente em caso de erro
+        
+    return cotacoes
+
+@st.cache_data(ttl=1800) # Atualiza notícias a cada 30 min
+def buscar_oportunidades():
+    """Busca manchetes de promoções."""
+    url = "https://www.melhorescartoes.com.br/category/programas-de-fidelidade"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    oportunidades = []
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        artigos = soup.find_all(['h2', 'h3'])
+        
+        for artigo in artigos[:12]:
+            titulo = artigo.get_text().strip()
+            link_tag = artigo.find('a') if artigo.find('a') else artigo.parent.find('a')
+            link = link_tag['href'] if link_tag else "#"
+            
+            keywords = ["bônus", "100%", "compra", "transferência", "livelo", "esfera"]
+            if any(k in titulo.lower() for k in keywords):
+                if not any(op['link'] == link for op in oportunidades):
+                    oportunidades.append({"titulo": titulo, "link": link})
+    except: pass
+    return oportunidades[:5]
+
+# --- 3. GERENCIAMENTO DE BANCO DE DADOS ---
 class PortfolioManager:
     def __init__(self, db_name="milhas_portfolio.db"):
         self.db_name = db_name
@@ -165,87 +233,51 @@ class PortfolioManager:
         conn.commit()
         conn.close()
 
-# --- 3. MONITOR DE OPORTUNIDADES ---
-@st.cache_data(ttl=1800)
-def buscar_oportunidades():
-    """Busca as últimas notícias de milhas."""
-    url = "https://www.melhorescartoes.com.br/category/programas-de-fidelidade"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    oportunidades = []
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Tenta encontrar os títulos das notícias
-        artigos = soup.find_all('h2') + soup.find_all('h3')
-        
-        for artigo in artigos[:10]:
-            titulo = artigo.get_text().strip()
-            # Encontra o link dentro do título ou no pai
-            link_tag = artigo.find('a')
-            if not link_tag:
-                link_tag = artigo.parent.find('a')
-            
-            link = link_tag['href'] if link_tag else "#"
-            
-            # Filtro inteligente
-            keywords = ["bônus", "100%", "compra", "transferência", "livelo", "esfera", "tudoazul", "latam", "smiles"]
-            if any(k in titulo.lower() for k in keywords):
-                if not any(op['link'] == link for op in oportunidades): # Evita duplicatas
-                    oportunidades.append({"titulo": titulo, "link": link})
-                
-    except:
-        pass
-        
-    return oportunidades[:5] # Retorna as top 5
-
-# --- 4. DADOS AUXILIARES ---
-@st.cache_data(ttl=3600)
-def obter_cotacoes():
-    return {"Smiles": 17.60, "LatamPass": 23.20, "TudoAzul": 19.80}
-
-# --- 5. INTERFACE PRINCIPAL ---
+# --- 4. INTERFACE PRINCIPAL ---
 def main():
     db = PortfolioManager()
-    cotacoes = obter_cotacoes()
     
-    # Gerenciamento Seguro da API Key
+    # 1. Configuração de Segurança (API Key)
     if "GEMINI_API_KEY" in st.secrets:
         api_key = st.secrets["GEMINI_API_KEY"]
     else:
-        # Fallback para teste local se não tiver secrets
         api_key = st.sidebar.text_input("Gemini API Key", type="password")
     
     analista = AIAnalyst(api_key)
 
-    # --- TOPO: TÍTULO E NOTÍCIAS ---
-    st.title("✈️ MilhasApp")
+    # 2. Busca Dados Externos (Cotações e Notícias)
+    with st.spinner("Atualizando mercado..."):
+        cotacoes = buscar_cotacoes_mercado()
     
-    with st.expander("🔥 Radar de Promoções (Hoje)", expanded=True):
+    # --- CABEÇALHO ---
+    st.title("✈️ MilhasApp")
+    st.caption(f"Cotações Atualizadas: Smiles (R$ {cotacoes.get('Smiles',0)}) | Latam (R$ {cotacoes.get('LatamPass',0)})")
+
+    # --- RADAR DE PROMOÇÕES ---
+    with st.expander("🔥 Radar de Oportunidades (Ao Vivo)", expanded=False):
         news = buscar_oportunidades()
         if news:
             for item in news:
                 st.markdown(f"👉 **[{item['titulo']}]({item['link']})**")
         else:
-            st.info("Nenhuma promoção bombástica detectada agora.")
+            st.info("Nenhuma promoção bombástica agora.")
 
-    # --- ÁREA DE AÇÃO (SIMULADOR) ---
+    # --- SIMULADOR ---
     st.markdown("---")
-    st.subheader("💰 Simulador de Lucro")
+    st.subheader("💰 Novo Cálculo")
     
-    # Inputs otimizados para mobile
     c1, c2 = st.columns(2)
     programa = c1.selectbox("Programa", ["Smiles", "LatamPass", "TudoAzul"])
     bonus = c2.selectbox("Bônus %", [100, 90, 80, 70, 60, 0])
     
-    investimento = st.number_input("Investimento Total (R$)", value=3500.0, step=100.0)
+    investimento = st.number_input("Investimento (R$)", value=3500.0, step=50.0)
     
     c3, c4 = st.columns(2)
     pontos_compra = c3.number_input("Pontos Base", value=100000, step=1000)
     
+    # O Input de Venda agora vem preenchido com o valor raspado da internet
     preco_ref = cotacoes.get(programa, 20.00)
-    preco_venda = c4.number_input("Venda (R$)", value=preco_ref, step=0.10)
+    preco_venda = c4.number_input("Venda (R$)", value=preco_ref, step=0.10, help=f"Média Mercado: R$ {preco_ref}")
 
     # Cálculos
     total_milhas = pontos_compra * (1 + (bonus / 100))
@@ -258,21 +290,21 @@ def main():
         "cpm": cpm, "preco_venda": preco_venda, "lucro": lucro, "roi": roi
     }
 
-    # --- RESULTADOS VISUAIS (CORRIGIDO) ---
-    st.markdown("<br>", unsafe_allow_html=True) # Espacinho
+    # --- RESULTADOS (Com CSS corrigido) ---
+    st.markdown("<br>", unsafe_allow_html=True)
     
     kpi1, kpi2 = st.columns(2)
     kpi1.metric("Lucro Líquido", f"R$ {lucro:.2f}", delta=f"{roi:.1f}% ROI")
     kpi2.metric("Custo Milheiro", f"R$ {cpm:.2f}", delta="CPM", delta_color="off")
     
-    # --- BOTÕES DE AÇÃO ---
+    # --- BOTÕES ---
     st.markdown("<br>", unsafe_allow_html=True)
     b1, b2 = st.columns(2)
     
     if b1.button("✨ IA Analisar", type="primary"):
         with st.spinner("Analisando..."):
             parecer = analista.analisar_cenario(cenario, cotacoes)
-            # Caixa de resposta da IA com cor fixa para leitura
+            # Caixa de resposta com estilo inline para garantir leitura
             st.markdown(f"""
             <div style="background-color:#F0F2F6; color:#1E1E1E; padding:15px; border-radius:10px; border-left:5px solid #00C853; margin-top:10px; font-family:sans-serif;">
             {parecer}
@@ -288,7 +320,6 @@ def main():
     with st.expander("📂 Minha Carteira"):
         df = db.listar_carteira()
         if not df.empty:
-            # Mostra tabela simples
             st.dataframe(
                 df[["data_registro", "programa", "lucro_projetado", "roi_percentual"]], 
                 hide_index=True, 
@@ -299,14 +330,12 @@ def main():
                     "roi_percentual": st.column_config.NumberColumn("ROI", format="%.1f%%")
                 }
             )
-            
-            # Botão de limpeza
-            if st.button("🗑️ Limpar Último Registro"):
+            if st.button("🗑️ Limpar Último"):
                 last_id = df.iloc[0]['id']
                 db.excluir_operacao(int(last_id))
                 st.rerun()
         else:
-            st.info("Nenhuma operação salva ainda.")
+            st.info("Nenhuma operação salva.")
 
 if __name__ == "__main__":
     main()

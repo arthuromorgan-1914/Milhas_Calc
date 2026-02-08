@@ -13,26 +13,22 @@ st.set_page_config(
     page_title="MilhasApp Pro",
     page_icon="✈️",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded" # Aberto para ver o perfil
 )
 
 # --- CSS (VISUAL MOBILE & CORREÇÃO DE CORES) ---
 st.markdown("""
     <style>
-        /* 1. Ajuste de Margens para Mobile */
         .block-container {
             padding-top: 1rem;
             padding-bottom: 5rem;
             padding-left: 0.5rem;
             padding-right: 0.5rem;
         }
-        
-        /* 2. Limpeza Visual */
         #MainMenu {visibility: visible;}
         footer {visibility: hidden;}
         header {visibility: hidden;}
         
-        /* 3. Botões Grandes (Touch Friendly) */
         .stButton button {
             width: 100%;
             border-radius: 12px;
@@ -43,7 +39,7 @@ st.markdown("""
             transition: all 0.3s ease;
         }
         
-        /* 4. CORREÇÃO CRÍTICA: Caixas de Métricas (Fundo Claro + Texto Preto) */
+        /* CORREÇÃO DAS CAIXAS DE MÉTRICAS */
         div[data-testid="stMetric"] {
             background-color: #F8F9FA !important;
             border: 1px solid #E9ECEF;
@@ -52,20 +48,14 @@ st.markdown("""
             text-align: center;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
-        
-        /* Título da métrica (ex: "Lucro") em Cinza Escuro */
         div[data-testid="stMetric"] label {
             color: #495057 !important; 
             font-size: 0.9rem !important;
         }
-        
-        /* Valor da métrica (ex: "R$ 200") em Preto Absoluto */
         div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
             color: #000000 !important;
             font-weight: 800 !important;
         }
-        
-        /* Delta (Percentual) com fundo suave */
         div[data-testid="stMetricDelta"] {
             background-color: rgba(0,0,0,0.05);
             border-radius: 5px;
@@ -75,40 +65,30 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. MÓDULO DE IA (GEMINI 2.5 FLASH) ---
+# --- 1. MÓDULO DE IA ---
 class AIAnalyst:
     def __init__(self, api_key):
         self.api_key = api_key
         if api_key:
             try:
                 genai.configure(api_key=api_key)
-                # Tenta usar a versão mais recente e rápida
                 self.model = genai.GenerativeModel('gemini-2.5-flash')
             except:
-                # Fallback se a 2.5 não estiver disponível na região
                 self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     def analisar_cenario(self, cenario_dict, dados_mercado):
         if not self.api_key:
-            return "⚠️ Configure a API Key nos 'Secrets' do Streamlit."
+            return "⚠️ Configure a API Key."
         
         prompt = f"""
-        Você é um consultor financeiro especialista em Milhas. Seja direto.
+        Consultor Milhas. Direto.
+        OPERAÇÃO: {cenario_dict['programa']}, Invest: R${cenario_dict['investimento']:.0f}, Venda: R${cenario_dict['preco_venda']:.2f}, Lucro: R${cenario_dict['lucro']:.0f}.
+        MERCADO: Média {cenario_dict['programa']} é R$ {dados_mercado.get(cenario_dict['programa'], 0):.2f}.
         
-        DADOS DA OPERAÇÃO:
-        - Programa: {cenario_dict['programa']}
-        - Investimento: R$ {cenario_dict['investimento']:.2f} (CPM: R$ {cenario_dict['cpm']:.2f})
-        - Venda Esperada: R$ {cenario_dict['preco_venda']:.2f}
-        - Lucro: R$ {cenario_dict['lucro']:.2f} (ROI: {cenario_dict['roi']:.1f}%)
-        
-        MERCADO HOJE (Referência):
-        - Preço médio de venda do {cenario_dict['programa']}: R$ {dados_mercado.get(cenario_dict['programa'], 0):.2f}
-        
-        SUA ANÁLISE (Responda em HTML simples, sem markdown):
-        Use tags <b> para negrito e <br> para pular linha.
-        1. O preço de venda de R$ {cenario_dict['preco_venda']} é realista?
-        2. O risco vale o retorno de R$ {cenario_dict['lucro']}?
-        3. Veredito final (Comece com um Emoji).
+        Responda em HTML simples (<b>negrito</b>).
+        1. Preço de venda realista?
+        2. Risco compensa?
+        3. Veredito (Emoji).
         """
         try:
             response = self.model.generate_content(prompt)
@@ -116,79 +96,58 @@ class AIAnalyst:
         except Exception as e:
             return f"Erro na IA: {str(e)}"
 
-# --- 2. SCRAPERS (PREÇOS E NOTÍCIAS) ---
-
-@st.cache_data(ttl=3600) # Atualiza preços a cada 1 hora
+# --- 2. SCRAPERS ---
+@st.cache_data(ttl=3600)
 def buscar_cotacoes_mercado():
-    """Busca média de preço em site de referência (Melhores Cartões)."""
     url = "https://www.melhorescartoes.com.br/cotacao-milhas"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-    
-    # Valores de segurança (caso o site caia)
-    cotacoes = {"Smiles": 17.00, "LatamPass": 23.00, "TudoAzul": 19.00}
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=8)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            # Procura tabelas na página
-            tabelas = soup.find_all('table')
-            
-            for tabela in tabelas:
-                texto_tabela = tabela.get_text().lower()
-                # Se a tabela fala de milhas, tenta ler
-                if "smiles" in texto_tabela or "latam" in texto_tabela:
-                    rows = tabela.find_all('tr')
-                    for row in rows:
-                        cols = row.find_all('td')
-                        if len(cols) > 1:
-                            prog = cols[0].get_text().strip().lower()
-                            # Limpa o preço (tira R$, troca virgula por ponto)
-                            preco_str = cols[1].get_text().replace('R$', '').replace('.', '').replace(',', '.').strip()
-                            
-                            try:
-                                # Pega apenas o primeiro número se houver faixa (ex: "17.50 - 18.00")
-                                preco_val = float(re.findall(r"\d+\.\d+", preco_str)[0])
-                                
-                                if "smiles" in prog: cotacoes["Smiles"] = preco_val
-                                elif "latam" in prog: cotacoes["LatamPass"] = preco_val
-                                elif "azul" in prog: cotacoes["TudoAzul"] = preco_val
-                            except:
-                                continue
-    except:
-        pass # Mantém os valores padrão silenciosamente em caso de erro
-        
-    return cotacoes
-
-@st.cache_data(ttl=1800) # Atualiza notícias a cada 30 min
-def buscar_oportunidades():
-    """Busca manchetes de promoções."""
-    url = "https://www.melhorescartoes.com.br/category/programas-de-fidelidade"
     headers = {"User-Agent": "Mozilla/5.0"}
-    oportunidades = []
-    
+    cotacoes = {"Smiles": 17.00, "LatamPass": 23.00, "TudoAzul": 19.00}
     try:
         response = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(response.text, 'html.parser')
-        artigos = soup.find_all(['h2', 'h3'])
-        
-        for artigo in artigos[:12]:
-            titulo = artigo.get_text().strip()
-            link_tag = artigo.find('a') if artigo.find('a') else artigo.parent.find('a')
-            link = link_tag['href'] if link_tag else "#"
-            
-            keywords = ["bônus", "100%", "compra", "transferência", "livelo", "esfera"]
-            if any(k in titulo.lower() for k in keywords):
-                if not any(op['link'] == link for op in oportunidades):
-                    oportunidades.append({"titulo": titulo, "link": link})
+        tabelas = soup.find_all('table')
+        for tabela in tabelas:
+            txt = tabela.get_text().lower()
+            if "smiles" in txt or "latam" in txt:
+                rows = tabela.find_all('tr')
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) > 1:
+                        prog = cols[0].get_text().strip().lower()
+                        val_str = cols[1].get_text().replace('R$', '').replace('.', '').replace(',', '.').strip()
+                        try:
+                            val = float(re.findall(r"\d+\.\d+", val_str)[0])
+                            if "smiles" in prog: cotacoes["Smiles"] = val
+                            elif "latam" in prog: cotacoes["LatamPass"] = val
+                            elif "azul" in prog: cotacoes["TudoAzul"] = val
+                        except: continue
     except: pass
-    return oportunidades[:5]
+    return cotacoes
 
-# --- 3. GERENCIAMENTO DE BANCO DE DADOS ---
+@st.cache_data(ttl=1800)
+def buscar_oportunidades():
+    url = "https://www.melhorescartoes.com.br/category/programas-de-fidelidade"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    ops = []
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        for a in soup.find_all(['h2', 'h3'])[:10]:
+            t = a.get_text().strip()
+            l_tag = a.find('a') if a.find('a') else a.parent.find('a')
+            l = l_tag['href'] if l_tag else "#"
+            ks = ["bônus", "100%", "compra", "transferência", "livelo", "esfera"]
+            if any(k in t.lower() for k in ks) and not any(o['link']==l for o in ops):
+                ops.append({"titulo": t, "link": l})
+    except: pass
+    return ops[:5]
+
+# --- 3. BANCO DE DADOS (COM SUPORTE A PERFIL) ---
 class PortfolioManager:
     def __init__(self, db_name="milhas_portfolio.db"):
         self.db_name = db_name
         self._init_db()
+        self._migrate_db() # Garante que a coluna usuario exista
     
     def _init_db(self):
         conn = sqlite3.connect(self.db_name)
@@ -197,6 +156,7 @@ class PortfolioManager:
             CREATE TABLE IF NOT EXISTS operacoes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 data_registro TEXT,
+                usuario TEXT,
                 programa TEXT,
                 investimento REAL,
                 pontos INTEGER,
@@ -208,20 +168,34 @@ class PortfolioManager:
         conn.commit()
         conn.close()
 
-    def salvar_operacao(self, dados: Dict):
+    def _migrate_db(self):
+        """Adiciona a coluna usuario em bancos antigos se não existir"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        try:
+            # Tenta selecionar a nova coluna. Se der erro, ela não existe.
+            cursor.execute("SELECT usuario FROM operacoes LIMIT 1")
+        except sqlite3.OperationalError:
+            # Coluna não existe, vamos criar
+            cursor.execute("ALTER TABLE operacoes ADD COLUMN usuario TEXT DEFAULT 'Guilherme'")
+            conn.commit()
+        conn.close()
+
+    def salvar_operacao(self, dados: Dict, usuario: str):
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO operacoes (data_registro, programa, investimento, pontos, preco_venda, lucro_projetado, roi_percentual)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (datetime.now().strftime("%d/%m %H:%M"), dados['programa'], dados['investimento'], dados['pontos'], dados['preco_venda'], dados['lucro'], dados['roi']))
+            INSERT INTO operacoes (data_registro, usuario, programa, investimento, pontos, preco_venda, lucro_projetado, roi_percentual)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (datetime.now().strftime("%d/%m %H:%M"), usuario, dados['programa'], dados['investimento'], dados['pontos'], dados['preco_venda'], dados['lucro'], dados['roi']))
         conn.commit()
         conn.close()
 
-    def listar_carteira(self) -> pd.DataFrame:
+    def listar_carteira(self, usuario_filtro: str) -> pd.DataFrame:
         conn = sqlite3.connect(self.db_name)
         try:
-            df = pd.read_sql_query("SELECT * FROM operacoes ORDER BY id DESC", conn)
+            # Filtra pelo usuário selecionado
+            df = pd.read_sql_query("SELECT * FROM operacoes WHERE usuario = ? ORDER BY id DESC", conn, params=(usuario_filtro,))
         except: df = pd.DataFrame()
         conn.close()
         return df
@@ -235,107 +209,103 @@ class PortfolioManager:
 
 # --- 4. INTERFACE PRINCIPAL ---
 def main():
-    db = PortfolioManager()
+    # --- BARRA LATERAL (PERFIL) ---
+    st.sidebar.title("👤 Perfil")
+    usuario_atual = st.sidebar.radio(
+        "Quem está usando?",
+        ["Guilherme", "Visitante"],
+        index=0
+    )
     
-    # 1. Configuração de Segurança (API Key)
+    st.sidebar.markdown("---")
+    
+    # API Key Config
     if "GEMINI_API_KEY" in st.secrets:
         api_key = st.secrets["GEMINI_API_KEY"]
     else:
         api_key = st.sidebar.text_input("Gemini API Key", type="password")
     
     analista = AIAnalyst(api_key)
+    db = PortfolioManager()
 
-    # 2. Busca Dados Externos (Cotações e Notícias)
-    with st.spinner("Atualizando mercado..."):
+    # --- DADOS EXTERNOS ---
+    with st.spinner("Carregando mercado..."):
         cotacoes = buscar_cotacoes_mercado()
     
-    # --- CABEÇALHO ---
-    st.title("✈️ MilhasApp")
-    st.caption(f"Cotações Atualizadas: Smiles (R$ {cotacoes.get('Smiles',0)}) | Latam (R$ {cotacoes.get('LatamPass',0)})")
+    # --- UI PRINCIPAL ---
+    st.title(f"✈️ Olá, {usuario_atual}!")
+    st.caption(f"Mercado Hoje: Smiles R${cotacoes.get('Smiles',0)} | Latam R${cotacoes.get('LatamPass',0)}")
 
-    # --- RADAR DE PROMOÇÕES ---
-    with st.expander("🔥 Radar de Oportunidades (Ao Vivo)", expanded=False):
+    # Radar
+    with st.expander("🔥 Radar de Oportunidades", expanded=False):
         news = buscar_oportunidades()
         if news:
-            for item in news:
-                st.markdown(f"👉 **[{item['titulo']}]({item['link']})**")
-        else:
-            st.info("Nenhuma promoção bombástica agora.")
+            for item in news: st.markdown(f"👉 **[{item['titulo']}]({item['link']})**")
+        else: st.info("Sem novidades no momento.")
 
-    # --- SIMULADOR ---
+    # Simulador
     st.markdown("---")
-    st.subheader("💰 Novo Cálculo")
+    st.subheader("💰 Simulador")
     
     c1, c2 = st.columns(2)
-    programa = c1.selectbox("Programa", ["Smiles", "LatamPass", "TudoAzul"])
-    bonus = c2.selectbox("Bônus %", [100, 90, 80, 70, 60, 0])
-    
-    investimento = st.number_input("Investimento (R$)", value=3500.0, step=50.0)
+    prog = c1.selectbox("Programa", ["Smiles", "LatamPass", "TudoAzul"])
+    bonus = c2.selectbox("Bônus %", [100, 80, 60, 0])
+    inv = st.number_input("Investimento (R$)", value=3500.0, step=50.0)
     
     c3, c4 = st.columns(2)
-    pontos_compra = c3.number_input("Pontos Base", value=100000, step=1000)
-    
-    # O Input de Venda agora vem preenchido com o valor raspado da internet
-    preco_ref = cotacoes.get(programa, 20.00)
-    preco_venda = c4.number_input("Venda (R$)", value=preco_ref, step=0.10, help=f"Média Mercado: R$ {preco_ref}")
+    pts = c3.number_input("Pontos Base", value=100000, step=1000)
+    preco_venda = c4.number_input("Venda (R$)", value=cotacoes.get(prog, 20.0), step=0.1)
 
     # Cálculos
-    total_milhas = pontos_compra * (1 + (bonus / 100))
-    lucro = ((total_milhas/1000) * preco_venda) - investimento
-    roi = (lucro / investimento) * 100 if investimento > 0 else 0
-    cpm = investimento / (total_milhas / 1000) if total_milhas > 0 else 0
-
+    total_pts = pts * (1 + (bonus / 100))
+    lucro = ((total_pts/1000) * preco_venda) - inv
+    roi = (lucro / inv) * 100 if inv > 0 else 0
+    cpm = inv / (total_pts / 1000) if total_pts > 0 else 0
+    
     cenario = {
-        "programa": programa, "investimento": investimento, "pontos": total_milhas,
+        "programa": prog, "investimento": inv, "pontos": total_pts,
         "cpm": cpm, "preco_venda": preco_venda, "lucro": lucro, "roi": roi
     }
 
-    # --- RESULTADOS (Com CSS corrigido) ---
+    # KPIs
     st.markdown("<br>", unsafe_allow_html=True)
+    k1, k2 = st.columns(2)
+    k1.metric("Lucro Líquido", f"R$ {lucro:.2f}", delta=f"{roi:.1f}%")
+    k2.metric("CPM", f"R$ {cpm:.2f}", delta_color="off")
     
-    kpi1, kpi2 = st.columns(2)
-    kpi1.metric("Lucro Líquido", f"R$ {lucro:.2f}", delta=f"{roi:.1f}% ROI")
-    kpi2.metric("Custo Milheiro", f"R$ {cpm:.2f}", delta="CPM", delta_color="off")
-    
-    # --- BOTÕES ---
+    # Ações
     st.markdown("<br>", unsafe_allow_html=True)
     b1, b2 = st.columns(2)
     
     if b1.button("✨ IA Analisar", type="primary"):
         with st.spinner("Analisando..."):
-            parecer = analista.analisar_cenario(cenario, cotacoes)
-            # Caixa de resposta com estilo inline para garantir leitura
+            res = analista.analisar_cenario(cenario, cotacoes)
             st.markdown(f"""
             <div style="background-color:#F0F2F6; color:#1E1E1E; padding:15px; border-radius:10px; border-left:5px solid #00C853; margin-top:10px; font-family:sans-serif;">
-            {parecer}
-            </div>
-            """, unsafe_allow_html=True)
+            {res}
+            </div>""", unsafe_allow_html=True)
             
-    if b2.button("💾 Salvar"):
-        db.salvar_operacao(cenario)
-        st.toast("Salvo na Carteira!", icon="✅")
+    if b2.button("💾 Salvar na Minha Carteira"):
+        # AQUI O SEGREDINHO: Salvamos passando o nome do usuário atual
+        db.salvar_operacao(cenario, usuario_atual)
+        st.toast(f"Salvo para {usuario_atual}!", icon="✅")
 
-    # --- CARTEIRA ---
+    # Carteira Filtrada
     st.markdown("---")
-    with st.expander("📂 Minha Carteira"):
-        df = db.listar_carteira()
+    with st.expander(f"📂 Carteira de {usuario_atual}"):
+        # AQUI O SEGREDINHO 2: Listamos apenas o usuário atual
+        df = db.listar_carteira(usuario_atual)
         if not df.empty:
             st.dataframe(
                 df[["data_registro", "programa", "lucro_projetado", "roi_percentual"]], 
-                hide_index=True, 
-                use_container_width=True,
-                column_config={
-                    "data_registro": "Data",
-                    "lucro_projetado": st.column_config.NumberColumn("Lucro", format="R$ %.2f"),
-                    "roi_percentual": st.column_config.NumberColumn("ROI", format="%.1f%%")
-                }
+                hide_index=True, use_container_width=True,
+                column_config={"lucro_projetado": st.column_config.NumberColumn("Lucro", format="R$ %.2f")}
             )
-            if st.button("🗑️ Limpar Último"):
-                last_id = df.iloc[0]['id']
-                db.excluir_operacao(int(last_id))
+            if st.button("🗑️ Apagar Último"):
+                db.excluir_operacao(int(df.iloc[0]['id']))
                 st.rerun()
         else:
-            st.info("Nenhuma operação salva.")
+            st.info(f"Nenhuma operação salva para {usuario_atual}.")
 
 if __name__ == "__main__":
     main()
